@@ -1,0 +1,79 @@
+---
+- name: Create the stack directories
+  ansible.builtin.file:
+    path: "{{ monitoring_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - prometheus
+    - grafana/provisioning/datasources
+    - grafana/provisioning/dashboards
+    - grafana/dashboards
+
+- name: Render configuration files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ monitoring_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+    - { src: prometheus.yml.j2, dest: prometheus/prometheus.yml }
+    - { src: datasource.yml.j2, dest: grafana/provisioning/datasources/prometheus.yml }
+  notify: Restart monitoring stack
+
+- name: Copy static files (alert rules, dashboards)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ monitoring_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: alerts.yml, dest: prometheus/alerts.yml }
+    - { src: dashboards.yml, dest: grafana/provisioning/dashboards/dashboards.yml }
+    - { src: node-overview.json, dest: grafana/dashboards/node-overview.json }
+  notify: Restart monitoring stack
+
+- name: Store the Grafana admin password outside the compose file
+  ansible.builtin.copy:
+    dest: "{{ monitoring_dir }}/grafana.env"
+    content: "GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_password }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart monitoring stack
+
+- name: Validate the Prometheus configuration and rules with promtool
+  ansible.builtin.command:
+    cmd: >-
+      docker run --rm --entrypoint promtool
+      -v {{ monitoring_dir }}/prometheus:/etc/prometheus:ro
+      {{ prometheus_image }} check config /etc/prometheus/prometheus.yml
+  changed_when: false
+
+- name: Start the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    state: present
+    pull: missing
+
+- name: Wait for Prometheus to be ready
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9090/-/ready
+  register: monitoring_prom_ready
+  until: monitoring_prom_ready.status == 200
+  retries: 30
+  delay: 2
+
+- name: Wait for Grafana to be healthy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+  register: monitoring_grafana_ready
+  until: monitoring_grafana_ready.status == 200
+  retries: 30
+  delay: 2

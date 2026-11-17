@@ -1,0 +1,16 @@
+---
+- name: Provision a monitoring server
+  hosts: monitoring
+  become: true
+  pre_tasks:
+    - name: Require a Grafana admin password
+      ansible.builtin.assert:
+        that:
+          - grafana_admin_password | length >= 12
+        fail_msg: "Set GRAFANA_ADMIN_PASSWORD (12+ characters) or define grafana_admin_password in a vault file."
+        quiet: true
+      no_log: true
+  roles:
+    - role: common
+    - role: docker
+    - role: monitoring

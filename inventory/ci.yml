@@ -1,0 +1,11 @@
+---
+# Used by GitHub Actions: the runner provisions itself.
+all:
+  children:
+    monitoring:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+          common_firewall_enabled: false   # do not touch the runner's network
+          common_harden_ssh: false

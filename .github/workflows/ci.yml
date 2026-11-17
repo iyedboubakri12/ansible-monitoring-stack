@@ -1,0 +1,66 @@
+name: ansible
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ansible-lint (production profile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "ansible-core>=2.17,<2.19" "ansible-lint>=24.12"
+      - run: ansible-galaxy collection install -r requirements.yml -p collections
+      - run: ansible-lint
+      - run: ansible-playbook site.yml -i inventory/ci.yml --syntax-check
+
+  converge:
+    name: Provision the runner, check idempotence, verify the stack
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Ansible (controller) and target-side Python libs
+        run: |
+          pip install "ansible-core>=2.17,<2.19"
+          ansible-galaxy collection install -r requirements.yml -p collections
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-apt python3-yaml
+      - name: Generate a throw-away Grafana password
+        run: |
+          PW=$(openssl rand -base64 24)
+          echo "::add-mask::$PW"
+          echo "GRAFANA_ADMIN_PASSWORD=$PW" >> "$GITHUB_ENV"
+      - name: First run (converge)
+        run: ansible-playbook site.yml -i inventory/ci.yml
+      - name: Second run must change nothing (idempotence)
+        run: |
+          ansible-playbook site.yml -i inventory/ci.yml | tee second-run.log
+          grep -qE 'changed=0 +unreachable=0 +failed=0' second-run.log || { echo "::error::playbook is not idempotent"; exit 1; }
+      - name: Verify Prometheus scrapes node_exporter and loaded the alert rules
+        run: |
+          for i in $(seq 1 30); do
+            curl -fs 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22node%22%7D' | grep -q '"value":\[[0-9.]*,"1"\]' && ok=1 && break
+            sleep 2
+          done
+          [ "${ok:-0}" = 1 ] || { echo "::error::node target is not up"; curl -s http://127.0.0.1:9090/api/v1/targets; exit 1; }
+          curl -fs http://127.0.0.1:9090/api/v1/rules | grep -q DiskWillFillIn24h
+      - name: Verify Grafana provisioned the datasource and the dashboard
+        run: |
+          curl -fs -u "admin:${GRAFANA_ADMIN_PASSWORD}" http://127.0.0.1:3000/api/datasources/uid/prometheus | grep -q '"type":"prometheus"'
+          curl -fs -u "admin:${GRAFANA_ADMIN_PASSWORD}" http://127.0.0.1:3000/api/dashboards/uid/node-overview | grep -q '"title":"Node overview"'
+          curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/datasources | grep -q 401
+      - name: Container status
+        if: always()
+        run: sudo docker compose -f /opt/monitoring/docker-compose.yml ps

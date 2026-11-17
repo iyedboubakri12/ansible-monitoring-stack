@@ -1,0 +1,9 @@
+---
+monitoring_dir: /opt/monitoring
+prometheus_image: prom/prometheus:v3.1.0
+node_exporter_image: prom/node-exporter:v1.8.2
+grafana_image: grafana/grafana:11.4.0
+prometheus_retention: 15d
+grafana_port: 3000
+# Read from the environment (or put it in an ansible-vault file). Never committed.
+grafana_admin_password: "{{ lookup('ansible.builtin.env', 'GRAFANA_ADMIN_PASSWORD') }}"

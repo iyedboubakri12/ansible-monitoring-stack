@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: Iyed Boubakri
+  description: Base packages, automatic security updates, SSH hardening and firewall
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+dependencies: []

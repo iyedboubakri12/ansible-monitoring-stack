@@ -1,0 +1,55 @@
+# {{ ansible_managed }}
+name: monitoring
+
+services:
+  prometheus:
+    image: {{ prometheus_image }}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time={{ prometheus_retention }}
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"   # not exposed publicly; Grafana is the entry point
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  node-exporter:
+    image: {{ node_exporter_image }}
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    pid: host
+    restart: unless-stopped
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+
+  grafana:
+    image: {{ grafana_image }}
+    env_file: grafana.env
+    environment:
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "{{ grafana_port }}:3000"
+    depends_on: [prometheus]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  prometheus-data:
+  grafana-data:
